@@ -11,6 +11,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,17 +30,27 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -47,12 +61,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -67,6 +86,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+// Палитра: тёмный фон, пять акцентов, у каждого своя роль
+private val Teal = Color(0xFF3CC9B4)   // действие, «онлайн»
+private val Amber = Color(0xFFFFB454)  // дневник, раздумье
+private val Sky = Color(0xFF5CC8FF)    // память
+private val Pink = Color(0xFFFF7AB8)   // запись голоса
+private val Lilac = Color(0xFFB9A8FF)  // сон
+private val PanelBg = Color(0x17FFFFFF)  // полупрозрачные карточки
+private val Dim = Color(0xFF9AA3AF)
+
 enum class Screen { MAIN, MEMORY, DIARY, SETTINGS }
 
 class MafyaState(private val ctx: Context) {
@@ -76,16 +104,41 @@ class MafyaState(private val ctx: Context) {
 
     var emotion by mutableStateOf(Emotion.NEUTRAL)
     var caption by mutableStateOf("О, привет. Это снова я.")
+    var userLine by mutableStateOf("")
     var listening by mutableStateOf(false)
     var speaking by mutableStateOf(false)
     var busy by mutableStateOf(false)
     var sleeping by mutableStateOf(false)
     var screen by mutableStateOf(Screen.MAIN)
 
+    val status: String
+        get() = when {
+            sleeping -> "спит"
+            listening -> "слушаю…"
+            busy -> "думаю…"
+            speaking -> "говорю"
+            else -> "онлайн"
+        }
+
+    val statusColor: Color
+        get() = when {
+            sleeping -> Lilac
+            listening -> Pink
+            busy -> Amber
+            speaking -> Teal
+            else -> Dim
+        }
+
     val voice = Voice(
         ctx,
         onText = { send(it) },
-        onListening = { listening = it; if (it) emotion = Emotion.LISTENING },
+        onListening = {
+            listening = it
+            if (it) emotion = Emotion.LISTENING
+            else if (emotion == Emotion.LISTENING && !busy) {
+                emotion = Emotion.NEUTRAL
+            }
+        },
         onSpeaking = { speaking = it }
     )
 
@@ -93,6 +146,7 @@ class MafyaState(private val ctx: Context) {
         resetJob?.cancel()
         resetJob = scope.launch {
             delay(8000)
+            while (speaking) delay(500)
             if (!sleeping && !busy && !listening) emotion = Emotion.NEUTRAL
         }
     }
@@ -109,17 +163,20 @@ class MafyaState(private val ctx: Context) {
     }
 
     fun send(text: String) {
-        if (text.isBlank() || busy) return
+        val msg = text.trim()
+        if (msg.isEmpty() || busy) return
         if (sleeping) wake()
+        userLine = msg
         if (store.apiKey.isBlank()) {
             emotion = Emotion.SURPRISED
-            caption = "Открой ⚙️ и вставь ключ OpenRouter — без него я не могу думать."
+            caption = "Открой настройки (шестерёнка) и вставь ключ OpenRouter — без него я не могу думать."
             return
         }
         busy = true
+        voice.stopSpeaking()
         emotion = Emotion.THINKING
         caption = "…"
-        store.addHistory("user", text)
+        store.addHistory("user", msg)
         scope.launch {
             try {
                 val raw = withContext(Dispatchers.IO) { Brain.chat(store) }
@@ -134,25 +191,42 @@ class MafyaState(private val ctx: Context) {
                 caption = r.text
                 if (store.speak) voice.speak(r.text)
             } catch (e: Exception) {
+                // неудачное сообщение не остаётся в истории, иначе при повторе оно задвоится
+                store.dropLastUserMessage()
                 emotion = Emotion.SURPRISED
-                caption = "Ошибка: ${e.message}"
+                caption = e.message ?: "Что-то пошло не так."
             }
             busy = false
             calmDown()
         }
     }
 
+    fun testConnection(done: (String) -> Unit) {
+        scope.launch {
+            val r = try {
+                withContext(Dispatchers.IO) { Brain.ping(store) }
+            } catch (e: Exception) {
+                "Не получилось: " + (e.message ?: "неизвестная ошибка")
+            }
+            done(r)
+        }
+    }
+
     fun sleep() {
         voice.stopSpeaking()
+        voice.stopListening()
         sleeping = true
         emotion = Emotion.SLEEP
-        caption = "Спокойной ночи… zzz"
-        if (store.apiKey.isNotBlank() && store.history().isNotEmpty()) {
+        caption = "Спокойной ночи…"
+        val hist = store.history()
+        val marker = hist.lastOrNull()?.content?.hashCode()?.toString() ?: ""
+        if (store.apiKey.isNotBlank() && hist.isNotEmpty() && marker != store.diaryMarker) {
             scope.launch {
                 try {
                     val t = withContext(Dispatchers.IO) { Brain.diaryEntry(store) }
                     val d = SimpleDateFormat("d MMMM yyyy", Locale("ru")).format(Date())
                     store.addDiary(d, t)
+                    store.diaryMarker = marker
                 } catch (_: Exception) {
                 }
             }
@@ -176,6 +250,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) { MafyaApp(state) }
         }
+    }
+
+    override fun onStop() {
+        // в фоне не говорим и не слушаем
+        state.voice.stopSpeaking()
+        state.voice.stopListening()
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -220,59 +301,140 @@ fun MafyaApp(s: MafyaState) {
     }
 }
 
+/** Текст проявляется по буквам, как субтитры в анонсе. */
+@Composable
+fun TypeText(text: String, modifier: Modifier = Modifier) {
+    var shown by remember(text) { mutableStateOf("") }
+    LaunchedEffect(text) {
+        val step = if (text.length > 160) 6 else 2
+        var i = 0
+        while (i < text.length) {
+            i = minOf(text.length, i + step)
+            shown = text.substring(0, i)
+            delay(24)
+        }
+    }
+    Text(
+        shown,
+        modifier = modifier,
+        color = Color.White,
+        fontSize = 19.sp,
+        lineHeight = 26.sp,
+        fontWeight = FontWeight.Medium,
+        textAlign = TextAlign.Center
+    )
+}
+
+@Composable
+fun Zzz(modifier: Modifier = Modifier) {
+    val t = rememberInfiniteTransition(label = "zzz")
+    val a by t.animateFloat(0.25f, 1f, infiniteRepeatable(tween(1400), RepeatMode.Reverse), label = "za")
+    Column(modifier.alpha(a), horizontalAlignment = Alignment.Start) {
+        Text("Z", color = Lilac, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+        Text("Z", color = Lilac, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 14.dp))
+        Text("z", color = Lilac, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 28.dp))
+    }
+}
+
 @Composable
 fun MainScreen(s: MafyaState, onMic: () -> Unit) {
     var input by remember { mutableStateOf("") }
+    val sendNow = {
+        val t = input
+        input = ""
+        s.send(t)
+    }
     Column(
-        Modifier.fillMaxSize().padding(16.dp),
+        Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton({ s.screen = Screen.MEMORY }) { Text("🧠", fontSize = 22.sp) }
-            TextButton({ s.screen = Screen.DIARY }) { Text("📖", fontSize = 22.sp) }
-            TextButton({ if (s.sleeping) s.wake() else s.sleep() }) {
-                Text(if (s.sleeping) "☀️" else "🌙", fontSize = 22.sp)
+        // шапка: имя и состояние слева, кнопки справа
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(start = 6.dp)) {
+                Text("Мафя", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text(s.status, color = s.statusColor, fontSize = 13.sp)
             }
-            TextButton({ s.screen = Screen.SETTINGS }) { Text("⚙️", fontSize = 22.sp) }
+            IconButton({ s.screen = Screen.MEMORY }) { MIcon(Ic.BRAIN, tint = Sky) }
+            IconButton({ s.screen = Screen.DIARY }) { MIcon(Ic.BOOK, tint = Amber) }
+            IconButton({ if (s.sleeping) s.wake() else s.sleep() }) {
+                MIcon(if (s.sleeping) Ic.SUN else Ic.MOON, tint = Lilac)
+            }
+            IconButton({ s.screen = Screen.SETTINGS }) { MIcon(Ic.GEAR) }
         }
-        Spacer(Modifier.weight(0.5f))
-        Face(
-            emotion = s.emotion,
-            speaking = s.speaking,
-            modifier = Modifier.clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) { s.poke() }
-        )
-        Spacer(Modifier.weight(0.4f))
+
+        Spacer(Modifier.weight(0.45f))
+        Box(Modifier.fillMaxWidth()) {
+            Face(
+                emotion = s.emotion,
+                speaking = s.speaking,
+                listening = s.listening,
+                modifier = Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { s.poke() }
+            )
+            if (s.sleeping) Zzz(Modifier.align(Alignment.TopEnd).padding(end = 36.dp, top = 8.dp))
+        }
+        Spacer(Modifier.weight(0.35f))
+
+        // что ты сказал последним
+        if (s.userLine.isNotEmpty()) {
+            Text(
+                s.userLine,
+                color = Dim,
+                fontSize = 13.sp,
+                fontStyle = FontStyle.Italic,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 24.dp)
+            )
+            Spacer(Modifier.height(6.dp))
+        }
         Box(
-            Modifier.fillMaxWidth().heightIn(min = 90.dp, max = 180.dp).verticalScroll(rememberScrollState()),
+            Modifier.fillMaxWidth().heightIn(min = 96.dp, max = 190.dp).verticalScroll(rememberScrollState()),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                s.caption,
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 12.dp)
-            )
+            TypeText(s.caption, Modifier.padding(horizontal = 12.dp))
         }
         Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
+
+        // поле ввода: таблетка с микрофоном слева и кнопкой отправки справа
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(32.dp)).background(PanelBg).padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onMic) {
+                MIcon(
+                    if (s.listening) Ic.STOP else Ic.MIC,
+                    tint = if (s.listening) Pink else Color.White
+                )
+            }
+            TextField(
                 value = input,
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Напиши Мафе…") },
-                singleLine = true
+                placeholder = { Text("Напиши Мафе…", color = Dim) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { sendNow() }),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    cursorColor = Teal
+                )
             )
-            TextButton(onMic) { Text(if (s.listening) "⏹" else "🎤", fontSize = 24.sp) }
-            TextButton({
-                val t = input
-                input = ""
-                s.send(t)
-            }) { Text("➤", fontSize = 24.sp) }
+            Box(
+                Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(if (input.isNotBlank() && !s.busy) Teal else Color(0x33FFFFFF))
+                    .clickable { sendNow() },
+                contentAlignment = Alignment.Center
+            ) {
+                MIcon(Ic.SEND, tint = if (input.isNotBlank() && !s.busy) Color(0xFF06211C) else Dim, size = 22.dp)
+            }
         }
     }
 }
@@ -281,12 +443,29 @@ fun MainScreen(s: MafyaState, onMic: () -> Unit) {
 fun Page(title: String, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onBack) { Text("← Назад") }
+            TextButton(onBack) { Text("← Назад", color = Dim) }
             Spacer(Modifier.width(8.dp))
-            Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(12.dp))
         content()
+    }
+}
+
+@Composable
+fun Panel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(PanelBg).padding(14.dp),
+        content = content
+    )
+}
+
+@Composable
+fun Empty(icon: Ic, tint: Color, text: String) {
+    Column(Modifier.fillMaxWidth().padding(top = 48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        MIcon(icon, tint = tint.copy(alpha = 0.6f), size = 56.dp)
+        Spacer(Modifier.height(14.dp))
+        Text(text, color = Dim, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
     }
 }
 
@@ -298,22 +477,27 @@ fun MemoryScreen(s: MafyaState) {
     val mems = remember(tick) { s.store.memories() }
     val rems = remember(tick) { s.store.reminders() }
     Page("Память", { s.screen = Screen.MAIN }) {
-        if (rems.isNotEmpty()) {
-            Text("Напоминания", color = Color(0xFFFFB454), fontWeight = FontWeight.Bold)
-            rems.forEach {
-                Text("• ${fmtTime.format(Date(it.time))} — ${it.text}", color = Color.White, modifier = Modifier.padding(vertical = 3.dp))
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (rems.isNotEmpty()) {
+                item { Text("Напоминания", color = Amber, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp)) }
+                items(rems) {
+                    Panel {
+                        Text(fmtTime.format(Date(it.time)), color = Amber, fontSize = 13.sp)
+                        Text(it.text, color = Color.White)
+                    }
+                }
+                item { Spacer(Modifier.height(8.dp)) }
             }
-            Spacer(Modifier.height(16.dp))
-        }
-        Text("Что я помню о тебе", color = Color(0xFF5CC8FF), fontWeight = FontWeight.Bold)
-        if (mems.isEmpty()) {
-            Text("Пока ничего. Расскажи о себе!", color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
-        }
-        LazyColumn(Modifier.weight(1f)) {
+            item { Text("Что я помню о тебе", color = Sky, fontWeight = FontWeight.Bold) }
+            if (mems.isEmpty()) {
+                item { Empty(Ic.BRAIN, Sky, "Пока ничего. Расскажи о себе, и я запомню важное.") }
+            }
             itemsIndexed(mems) { i, m ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(m, color = Color.White, modifier = Modifier.weight(1f))
-                    TextButton({ s.store.removeMemory(i); tick++ }) { Text("✕", color = Color.Gray) }
+                Panel {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(m, color = Color.White, modifier = Modifier.weight(1f))
+                        IconButton({ s.store.removeMemory(i); tick++ }) { MIcon(Ic.CLOSE, tint = Dim, size = 20.dp) }
+                    }
                 }
             }
         }
@@ -325,15 +509,15 @@ fun DiaryScreen(s: MafyaState) {
     val entries = remember { s.store.diary().reversed() }
     Page("Дневник", { s.screen = Screen.MAIN }) {
         if (entries.isEmpty()) {
-            Text(
-                "Пусто. Когда я ухожу в режим сна (🌙), я записываю в дневник, как прошёл день.",
-                color = Color.Gray
-            )
+            Empty(Ic.BOOK, Amber, "Пусто. Когда я ложусь спать (кнопка с луной), я записываю, как прошёл день.")
         }
-        LazyColumn(Modifier.weight(1f)) {
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(entries) { e ->
-                Text(e.date, color = Color(0xFFFFB454), fontWeight = FontWeight.Bold)
-                Text(e.text, color = Color.White, modifier = Modifier.padding(top = 4.dp, bottom = 18.dp))
+                Panel {
+                    Text(e.date, color = Amber, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(e.text, color = Color.White, lineHeight = 22.sp)
+                }
             }
         }
     }
@@ -342,43 +526,4 @@ fun DiaryScreen(s: MafyaState) {
 @Composable
 fun SettingsScreen(s: MafyaState) {
     var base by remember { mutableStateOf(s.store.apiBase) }
-    var key by remember { mutableStateOf(s.store.apiKey) }
-    var model by remember { mutableStateOf(s.store.model) }
-    var name by remember { mutableStateOf(s.store.userName) }
-    var speak by remember { mutableStateOf(s.store.speak) }
-    Page("Настройки", { s.screen = Screen.MAIN }) {
-        Column(Modifier.verticalScroll(rememberScrollState())) {
-            OutlinedTextField(
-                name, { name = it; s.store.userName = it },
-                label = { Text("Как тебя зовут") }, singleLine = true, modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                base, { base = it; s.store.apiBase = it },
-                label = { Text("API URL (по умолчанию OpenRouter)") }, singleLine = true, modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                key, { key = it; s.store.apiKey = it },
-                label = { Text("API-ключ") }, singleLine = true,
-                visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                model, { model = it; s.store.model = it },
-                label = { Text("Модель") }, singleLine = true, modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Озвучивать ответы", color = Color.White, modifier = Modifier.weight(1f))
-                Switch(speak, { speak = it; s.store.speak = it })
-            }
-            Spacer(Modifier.height(18.dp))
-            Text(
-                "Подойдёт любой сервис с OpenAI-совместимым API: OpenAI, OpenRouter, Groq, DeepSeek и т.д. " +
-                    "Ключ хранится только на телефоне.",
-                color = Color.Gray, fontSize = 13.sp
-            )
-        }
-    }
-}
+    var key by remember { mutableStat
