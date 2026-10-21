@@ -526,4 +526,5 @@ fun DiaryScreen(s: MafyaState) {
 @Composable
 fun SettingsScreen(s: MafyaState) {
     var base by remember { mutableStateOf(s.store.apiBase) }
-    var key by remember { mutableStat
+    var key by remember { mutableStateOf(s.store.apiKey) }
+// ... остальное тело SettingsScreen
