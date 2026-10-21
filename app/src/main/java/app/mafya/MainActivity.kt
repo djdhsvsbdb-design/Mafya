@@ -527,4 +527,52 @@ fun DiaryScreen(s: MafyaState) {
 fun SettingsScreen(s: MafyaState) {
     var base by remember { mutableStateOf(s.store.apiBase) }
     var key by remember { mutableStateOf(s.store.apiKey) }
-// ... остальное тело SettingsScreen
+    var testResult by remember { mutableStateOf("") }
+    var speakOn by remember { mutableStateOf(s.store.speak) }
+
+    Page("Настройки", { s.screen = Screen.MAIN }) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            Panel {
+                Text("Адрес API", color = Dim, fontSize = 13.sp)
+                OutlinedTextField(
+                    value = base,
+                    onValueChange = { base = it; s.store.apiBase = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("Ключ OpenRouter", color = Dim, fontSize = 13.sp)
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = { key = it; s.store.apiKey = it },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Panel {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Озвучивать ответы", color = Color.White, modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = speakOn,
+                        onCheckedChange = { speakOn = it; s.store.speak = it }
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = {
+                    testResult = "Проверяю…"
+                    s.testConnection { testResult = it }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Teal, contentColor = Color(0xFF06211C)),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Проверить соединение") }
+            if (testResult.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(testResult, color = Color.White)
+            }
+        }
+    }
+}
