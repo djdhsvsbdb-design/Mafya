@@ -527,6 +527,11 @@ fun DiaryScreen(s: MafyaState) {
 fun SettingsScreen(s: MafyaState) {
     var base by remember { mutableStateOf(s.store.apiBase) }
     var key by remember { mutableStateOf(s.store.apiKey) }
+    var model by remember { mutableStateOf(s.store.model) }
+    var proxy by remember {
+        mutableStateOf(if (s.store.proxyHost.isBlank()) "" else "${s.store.proxyHost}:${s.store.proxyPort}")
+    }
+    var socks by remember { mutableStateOf(s.store.proxySocks) }
     var testResult by remember { mutableStateOf("") }
     var speakOn by remember { mutableStateOf(s.store.speak) }
 
@@ -549,6 +554,37 @@ fun SettingsScreen(s: MafyaState) {
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(12.dp))
+                Text("Модель", color = Dim, fontSize = 13.sp)
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = { model = it; s.store.model = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("Прокси (адрес:порт), пусто = без прокси", color = Dim, fontSize = 13.sp)
+                OutlinedTextField(
+                    value = proxy,
+                    onValueChange = {
+                        proxy = it
+                        val h = it.substringBeforeLast(':', "")
+                        val pt = it.substringAfterLast(':', "").toIntOrNull()
+                        if (h.isNotBlank() && pt != null) {
+                            s.store.proxyHost = h
+                            s.store.proxyPort = pt
+                        } else {
+                            s.store.proxyHost = ""
+                            s.store.proxyPort = 0
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("SOCKS5 (иначе HTTP)", color = Color.White, modifier = Modifier.weight(1f))
+                    Switch(checked = socks, onCheckedChange = { socks = it; s.store.proxySocks = it })
+                }
             }
             Spacer(Modifier.height(12.dp))
             Panel {
