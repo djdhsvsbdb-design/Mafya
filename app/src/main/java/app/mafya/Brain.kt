@@ -3,6 +3,8 @@ package app.mafya
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -54,7 +56,7 @@ $memText
                 if (attempt == 0) Thread.sleep(800)
             }
         }
-        throw Exception("Нет связи с сервером. Проверь интернет.", last)
+        throw Exception("Нет связи с сервером. Проверь интернет или прокси.", last)
     }
 
     private fun friendlyError(code: Int, body: String): String {
@@ -72,7 +74,7 @@ $memText
         val hint = when (code) {
             401 -> "Ключ не принят. Проверь его в настройках (шестерёнка)."
             402 -> "На счёте OpenRouter закончились деньги."
-            403 -> "Доступ запрещён: ключ отозван, либо сервис или модель недоступны из твоего региона (попробуй VPN)."
+            403 -> "Доступ запрещён: ключ отозван, либо сервис или модель недоступны из твоего региона (попробуй VPN или прокси)."
             404 -> "Модель или адрес API не найдены."
             429 -> "Слишком много запросов, подожди немного."
             else -> "Ошибка сервера."
@@ -80,8 +82,21 @@ $memText
         return "$hint [HTTP $code${if (msg.isNotBlank()) ": " + msg.take(160) else ""}]"
     }
 
+    /** Открывает соединение: через прокси, если он задан в настройках. */
+    private fun open(store: Store, url: URL): HttpURLConnection {
+        val host = store.proxyHost
+        val port = store.proxyPort
+        val conn = if (host.isNotBlank() && port > 0) {
+            val type = if (store.proxySocks) Proxy.Type.SOCKS else Proxy.Type.HTTP
+            url.openConnection(Proxy(type, InetSocketAddress.createUnresolved(host, port)))
+        } else {
+            url.openConnection()
+        }
+        return conn as HttpURLConnection
+    }
+
     private fun callOnce(store: Store, messages: JSONArray): String {
-        val c = URL(store.apiBase + "/chat/completions").openConnection() as HttpURLConnection
+        val c = open(store, URL(store.apiBase + "/chat/completions"))
         c.requestMethod = "POST"
         c.connectTimeout = 20000
         c.readTimeout = 60000
