@@ -33,6 +33,18 @@ class Store(ctx: Context) {
         get() = p.getBoolean("speak", true)
         set(v) { p.edit().putBoolean("speak", v).apply() }
 
+        var proxyHost: String
+    get() = p.getString("phost", "") ?: ""
+    set(v) { p.edit().putString("phost", v.trim()).apply() }
+
+var proxyPort: Int
+    get() = p.getInt("pport", 0)
+    set(v) { p.edit().putInt("pport", v).apply() }
+
+var proxySocks: Boolean
+    get() = p.getBoolean("psocks", false)
+    set(v) { p.edit().putBoolean("psocks", v).apply() }
+    
     // ---------- Память ----------
     fun memories(): MutableList<String> {
         val a = JSONArray(p.getString("mem", "[]"))
