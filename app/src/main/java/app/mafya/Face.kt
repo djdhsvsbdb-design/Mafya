@@ -77,7 +77,7 @@ private fun heartPath(cx: Float, cy: Float, s: Float) = Path().apply {
 }
 
 @Composable
-fun Face(emotion: Emotion, speaking: Boolean, modifier: Modifier = Modifier) {
+fun Face(emotion: Emotion, speaking: Boolean, modifier: Modifier = Modifier, listening: Boolean = false) {
     val t = rememberInfiniteTransition(label = "face")
     val blink by t.animateFloat(
         initialValue = 1f,
@@ -106,14 +106,38 @@ fun Face(emotion: Emotion, speaking: Boolean, modifier: Modifier = Modifier) {
         label = "bob"
     )
 
+    val gaze by t.animateFloat(
+        initialValue = 0f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            keyframes<Float> {
+                durationMillis = 8000
+                0f at 0
+                0f at 2500
+                1f at 2900
+                1f at 4000
+                -1f at 4500
+                -1f at 5800
+                0f at 6200
+            }
+        ),
+        label = "gaze"
+    )
+    val pulse by t.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Restart),
+        label = "pulse"
+    )
+
     Canvas(modifier.fillMaxWidth().aspectRatio(1.1f)) {
         val w = size.width
         val h = size.height
-        val r = w * 0.13f
+        val r = w * 0.12f
         val sw = w * 0.032f
         val ey = h * 0.40f + bob
-        val lx = w * 0.24f
-        val rx = w * 0.76f
+        val lx = w * 0.27f
+        val rx = w * 0.73f
         val sleeping = emotion == Emotion.SLEEP
         val ink = if (sleeping) Color.White.copy(alpha = 0.55f) else Color.White
 
@@ -128,10 +152,20 @@ fun Face(emotion: Emotion, speaking: Boolean, modifier: Modifier = Modifier) {
             center = Offset(w / 2, h * 0.5f)
         )
 
+        if (listening) {
+            drawCircle(
+                Color(0xFF3CC9B4).copy(alpha = 0.35f * (1f - pulse)),
+                radius = w * (0.30f + 0.18f * pulse),
+                center = Offset(w / 2, h * 0.5f),
+                style = Stroke(width = w * 0.008f)
+            )
+        }
+
+        val gx = if (sleeping) 0f else gaze * r * 0.22f
         val (le, re) = eyes(emotion)
         val big = if (emotion == Emotion.SURPRISED) 1.15f else 1f
-        drawEye(le, lx, ey, r * big, sw, ink, blink, left = true)
-        drawEye(re, rx, ey, r * big, sw, ink, blink, left = false)
+        drawEye(le, lx + gx, ey, r * big, sw, ink, blink, left = true)
+        drawEye(re, rx + gx, ey, r * big, sw, ink, blink, left = false)
 
         // румянец
         if (emotion in listOf(Emotion.NEUTRAL, Emotion.HAPPY, Emotion.WINK, Emotion.HEART, Emotion.LISTENING, Emotion.STARS)) {
