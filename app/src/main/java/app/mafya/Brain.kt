@@ -59,16 +59,25 @@ $memText
 
     private fun friendlyError(code: Int, body: String): String {
         val msg = try {
-            JSONObject(body).optJSONObject("error")?.optString("message").orEmpty()
-        } catch (e: Exception) { "" }
+            val err = JSONObject(body).opt("error")
+            when (err) {
+                is JSONObject -> err.optString("message")
+                is String -> err
+                else -> ""
+            }
+        } catch (e: Exception) {
+            // не JSON (например, страница-заглушка): показываем кусок текста без тегов
+            body.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+        }
         val hint = when (code) {
-            401, 403 -> "Ключ не подходит. Проверь его в настройках."
+            401 -> "Ключ не принят. Проверь его в настройках (шестерёнка)."
             402 -> "На счёте OpenRouter закончились деньги."
+            403 -> "Доступ запрещён: ключ отозван, либо сервис или модель недоступны из твоего региона (попробуй VPN)."
             404 -> "Модель или адрес API не найдены."
             429 -> "Слишком много запросов, подожди немного."
             else -> "Ошибка сервера."
         }
-        return "$hint (HTTP $code${if (msg.isNotBlank()) ": " + msg.take(120) else ""})"
+        return "$hint [HTTP $code${if (msg.isNotBlank()) ": " + msg.take(160) else ""}]"
     }
 
     private fun callOnce(store: Store, messages: JSONArray): String {
@@ -104,6 +113,14 @@ $memText
             msgs.put(JSONObject().put("role", it.role).put("content", it.content))
         }
         return call(store, msgs)
+    }
+
+    /** Проверка ключа, адреса и модели — кнопка в настройках. */
+    fun ping(store: Store): String {
+        val msgs = JSONArray()
+        msgs.put(JSONObject().put("role", "user").put("content", "Ответь одним словом: привет"))
+        val r = call(store, msgs).trim().replace("\n", " ")
+        return "Связь есть. Модель ответила: " + r.take(40)
     }
 
     /** Запись в дневник по итогам дня (вызывается при уходе в режим сна). */
