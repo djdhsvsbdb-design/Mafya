@@ -43,6 +43,7 @@ class Store(ctx: Context) {
         val l = memories()
         if (s.isNotBlank() && l.none { it.equals(s, ignoreCase = true) }) {
             l.add(s.trim())
+            while (l.size > 60) l.removeAt(0)
             p.edit().putString("mem", JSONArray(l).toString()).apply()
         }
     }
@@ -89,6 +90,24 @@ class Store(ctx: Context) {
         all.forEach { a.put(JSONObject().put("r", it.role).put("c", it.content)) }
         p.edit().putString("hist", a.toString()).apply()
     }
+
+    fun dropLastUserMessage() {
+        val h = history()
+        if (h.isNotEmpty() && h.last().role == "user") {
+            val a = JSONArray()
+            h.dropLast(1).forEach { a.put(JSONObject().put("r", it.role).put("c", it.content)) }
+            p.edit().putString("hist", a.toString()).apply()
+        }
+    }
+
+    fun clearHistory() {
+        p.edit().putString("hist", "[]").apply()
+    }
+
+    /** Чтобы не писать в дневник одно и то же при каждом уходе в сон. */
+    var diaryMarker: String
+        get() = p.getString("dmark", "") ?: ""
+        set(v) { p.edit().putString("dmark", v).apply() }
 
     // ---------- Напоминания ----------
     data class Reminder(val time: Long, val text: String)
