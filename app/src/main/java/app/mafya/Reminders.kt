@@ -20,7 +20,7 @@ class ReminderReceiver : BroadcastReceiver() {
             ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
         val n = Notification.Builder(ctx, "reminders")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notif)
             .setContentTitle("Мафя")
             .setContentText(text)
             .setContentIntent(open)
